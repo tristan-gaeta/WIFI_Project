@@ -1,14 +1,10 @@
-import java.nio.ByteBuffer;
-import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.List;
 
 public class Test {
-    enum State {
-        A,B
-    }
-    public static void main(String[] args) {
-        State a = State.A;
-        State b = State.A;
 
-        System.out.println(a == b);
+    public static boolean acknowledged;
+    public static void main(String[] args) {
+        System.out.printf("");
     }
 }
