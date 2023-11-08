@@ -13,6 +13,15 @@ public class Packet {
 
     private final ByteBuffer buf;
 
+    public Packet(int type, int seq, short dest, short source) {
+        short control = (short) (type << 13); //last 3 bits of type at head
+        control |= seq & 0xFFF; //last 12 bits of seq at tail
+
+        this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE);
+        this.buf.putShort(control).putShort(dest).putShort(source);
+        this.buf.putInt(-1); //TODO
+    }
+
     public Packet(int type, int seq, short dest, short source, byte[] data, int len) {
         short control = (short) (type << 13); //last 3 bits of type at head
         control |= seq & 0xFFF; //last 12 bits of seq at tail
@@ -32,7 +41,7 @@ public class Packet {
     }
 
     public byte[] extractData(){
-        return Arrays.copyOfRange(this.buf.array(), 6, this.buf.capacity() - 4);
+        return Arrays.copyOfRange(this.buf.array(), 6, this.size() - 4);
     }
 
     public short getDest(){
@@ -58,17 +67,34 @@ public class Packet {
         return control & 0xFFF;
     }
 
+    public int getCrc(){
+        return this.buf.getInt(this.size() - 4);
+    }
+
     public boolean isValid(){
         //TODO shecksum
-        int size = this.buf.limit();
+        int size = this.size();
         return size >= MIN_PACKET_SIZE && size <= RF.aMPDUMaximumLength;
     }
 
     public void resend(){
-        short control = this.buf.getShort(0);
-        control |= 0x1000;
-        this.buf.putShort(0, control);
-        // TODO update seq num and crc?
+        byte control = this.buf.get(0);
+        control |= 0x10;
+        this.buf.put(0, control);
+        // TODO update crc?
     }
 
+    public int size(){
+        return this.buf.array().length;
+    }
+
+    @Override
+    public String toString(){
+        String str = "[";
+        for (byte b : this.buf.array()) {
+            str += String.format(" %02x", b);
+        }
+        str += " ]";
+        return str;
+    }
 }

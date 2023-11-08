@@ -9,14 +9,21 @@ import rf.RF;
  * {@link Dot11Interface} for more
  * details on these routines.
  * 
- * @author richards
+ * @author Tristan Gaeta
  */
 public class LinkLayer implements Dot11Interface {
-	public final RF rf = new RF(null, null);
-	public final PrintWriter output;
-	public final short macAddr; // Our MAC address
+	// modes for writing to log (bitmask)
+	public static final int DEBUG = 1;
+	public static final int STATE = 2;
+	public static final int ERROR = 4;
+
+	public final RF rf;
+	public final PrintWriter out;
+	public final short macAddr;
 	public final Sender sender;
 	public final Receiver receiver;
+
+	private int logMode;
 
 	/**
 	 * Constructor takes a MAC address and the PrintWriter to which our output will
@@ -27,10 +34,28 @@ public class LinkLayer implements Dot11Interface {
 	 */
 	public LinkLayer(short ourMAC, PrintWriter output) {
 		this.macAddr = ourMAC;
-		this.output = output;
+		this.out = output;
+		this.logMode = -1;
+
+		this.rf = new RF(null, null);
 		this.sender = new Sender(this);
 		this.receiver = new Receiver(this);
-		output.println("LinkLayer: Constructor ran.");
+
+		new Thread(this.sender).start();
+		new Thread(this.receiver).start();
+	}
+
+	/**
+	 * Print a message if the current log mode and the given
+	 * mask have any common bit set. 
+	 * 
+	 * @param msg
+	 * @param mask
+	 */
+	public void log(String msg, int mask) {
+		if ((this.logMode & mask) != 0) {
+			this.out.println(msg);
+		}
 	}
 
 	@Override
@@ -42,13 +67,15 @@ public class LinkLayer implements Dot11Interface {
 		int bytesToSend = Math.min(Math.min(data.length, len), Packet.MAX_DATA_SIZE);
 
 		if (bytesToSend != len) {
-			this.output.println("Cannot send all "+len+" bytes. Sending "+bytesToSend+" bytes.");
+			this.log("Cannot send all " + len + " bytes of data. Sending first " + bytesToSend + " bytes.", ERROR);
 		}
 
-		Packet pkt = new Packet(Packet.DATA, 0, dest, this.macAddr, data, bytesToSend);
+		Packet pkt = new Packet(Packet.DATA, 0, dest, this.macAddr, data, bytesToSend); //TODO seq #
+		this.log("Enqueueing packet: " + pkt.toString(), DEBUG);
 		boolean success = this.sender.enqueue(pkt);
+
 		if (!success) {
-			this.output.println("Failed to enqueue outgoing data packet.");
+			this.log("Failed to enqueue outgoing data packet.", ERROR);
 			return -1;
 		} else {
 			return bytesToSend;
@@ -61,9 +88,12 @@ public class LinkLayer implements Dot11Interface {
 	 * the Transmission object. See docs for full description.
 	 */
 	public int recv(Transmission t) {
-		Packet pkt = this.receiver.dequeue();
-		t.setBuf(pkt.extractData());
-		return -1; //TODO
+		Packet pkt = this.receiver.next();
+		byte[] data = pkt.extractData();
+		t.setBuf(data);
+		t.setDestAddr(pkt.getDest());
+		t.setSourceAddr(pkt.getSource());
+		return data.length;
 	}
 
 	@Override
@@ -71,7 +101,7 @@ public class LinkLayer implements Dot11Interface {
 	 * Returns a current status code. See docs for full description.
 	 */
 	public int status() {
-		output.println("LinkLayer: Faking a status() return value of 0");
+		out.println("LinkLayer: Faking a status() return value of 0"); //TODO
 		return 0;
 	}
 
@@ -80,7 +110,26 @@ public class LinkLayer implements Dot11Interface {
 	 * Passes command info to your link layer. See docs for full description.
 	 */
 	public int command(int cmd, int val) {
-		output.println("LinkLayer: Sending command " + cmd + " with value " + val);
+		switch (cmd) {
+			case 0: {
+				String summary = "-------Summary-------\n";
+				summary += "Command 0: print summary\n";
+				summary += "Command 1: set debug level\n";
+				summary += "\tinput is a bitmask where bits 0-3 are for debug, errors, and state respectively.\n";
+				summary += "\tCurrent Value: " + this.logMode;
+				this.out.println(summary);
+				break;
+			}
+
+			case 1: {
+				this.logMode = val | ERROR; //err messages are always logged
+			}
+
+			// TODO other commands
+
+			default:
+				break;
+		}
 		return 0;
 	}
 }
