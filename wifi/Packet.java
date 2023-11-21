@@ -1,4 +1,5 @@
 package wifi;
+
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
@@ -14,25 +15,25 @@ public class Packet {
     private final ByteBuffer buf;
 
     public Packet(int type, int seq, short dest, short source) {
-        short control = (short) (type << 13); //last 3 bits of type at head
-        control |= seq & 0xFFF; //last 12 bits of seq at tail
+        short control = (short) (type << 13); // last 3 bits of type at head of short
+        control |= seq & 0xFFF; // last 12 bits of seq at tail
 
         this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE);
         this.buf.putShort(control).putShort(dest).putShort(source);
-        this.buf.putInt(-1); //TODO
+        this.buf.putInt(this.checkSum());
     }
 
     public Packet(int type, int seq, short dest, short source, byte[] data, int len) {
-        short control = (short) (type << 13); //last 3 bits of type at head
-        control |= seq & 0xFFF; //last 12 bits of seq at tail
+        short control = (short) (type << 13); // last 3 bits of type at head
+        control |= seq & 0xFFF; // last 12 bits of seq at tail
 
         this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE + len);
         this.buf.putShort(control).putShort(dest).putShort(source);
         this.buf.put(data, 0, len);
-        this.buf.putInt(-1); //TODO
+        this.buf.putInt(this.checkSum());
     }
 
-    public Packet(byte[] array){
+    public Packet(byte[] array) {
         this.buf = ByteBuffer.wrap(array);
     }
 
@@ -40,15 +41,16 @@ public class Packet {
         return this.buf.array();
     }
 
-    public byte[] extractData(){
+    public byte[] extractData() {
+        // make a new array and fill it with just the data segment of the packet
         return Arrays.copyOfRange(this.buf.array(), 6, this.size() - 4);
     }
 
-    public short getDest(){
+    public short getDest() {
         return this.buf.getShort(2);
     }
 
-    public short getSource(){
+    public short getSource() {
         return this.buf.getShort(4);
     }
 
@@ -57,44 +59,66 @@ public class Packet {
         return control >>> 5;
     }
 
-    public boolean isResend(){
+    public boolean isResend() {
         byte control = this.buf.get(0);
         return (control & 0x10) != 0;
     }
 
-    public int getSeqNum() {
+    public short getSeqNum() {
         short control = this.buf.getShort(0);
-        return control & 0xFFF;
+        return (short) (control & 0xFFF);
     }
 
-    public int getCrc(){
+    public int checkSum() {
+        return -1; // TODO
+    }
+
+    public int getCrc() {
         return this.buf.getInt(this.size() - 4);
     }
 
-    public boolean isValid(){
-        //TODO shecksum
+    public boolean isValid() {
         int size = this.size();
-        return size >= MIN_PACKET_SIZE && size <= RF.aMPDUMaximumLength;
+        if (size < MIN_PACKET_SIZE || size > RF.aMPDUMaximumLength) {
+            return false;
+        }
+        return this.getCrc() == this.checkSum();
     }
 
-    public void resend(){
+    public void flagAsResend() {
         byte control = this.buf.get(0);
         control |= 0x10;
         this.buf.put(0, control);
-        // TODO update crc?
+        this.buf.putInt(this.size() - 4, this.checkSum());
     }
 
-    public int size(){
+    public int size() {
         return this.buf.array().length;
     }
 
     @Override
-    public String toString(){
+    public String toString() {
         String str = "[";
-        for (byte b : this.buf.array()) {
-            str += String.format(" %02x", b);
+        switch (this.getFrameType()) {
+            case DATA:
+                str += "DATA ";
+                break;
+            case ACK:
+                str += "ACK ";
+                break;
+            // TODO others
+            default:
+                return str + "INVALID]";
         }
-        str += " ]";
-        return str;
+        str += "#" + this.getSeqNum() + " ";
+        str += this.getSource() + "->" + this.getDest();
+        int size = this.size();
+        if (size > MIN_PACKET_SIZE) {
+            str += " ";
+            for (int i = 6; i < this.size() - 4; i++) {
+                str += (char) this.buf.get(i);
+            }
+        }
+        return str + "]";
     }
 }

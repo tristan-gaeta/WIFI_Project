@@ -1,7 +1,6 @@
 package wifi;
 
 import java.io.PrintWriter;
-
 import rf.RF;
 
 /**
@@ -12,14 +11,14 @@ import rf.RF;
  * @author Tristan Gaeta
  */
 public class LinkLayer implements Dot11Interface {
-	// modes for writing to log (bitmask)
-	public static final int DEBUG = 1;
-	public static final int STATE = 2;
-	public static final int ERROR = 4;
+	/** Bitmask for output log mode */
+	public static final int DEBUG = 1, STATE = 2, ERROR = 4;
+	private static final int BLOCK_DURATION = 50;
 
 	public final RF rf;
-	public final PrintWriter out;
+	private final PrintWriter out;
 	public final short macAddr;
+    public final SequenceTable seqNums;
 	public final Sender sender;
 	public final Receiver receiver;
 
@@ -35,11 +34,12 @@ public class LinkLayer implements Dot11Interface {
 	public LinkLayer(short ourMAC, PrintWriter output) {
 		this.macAddr = ourMAC;
 		this.out = output;
-		this.logMode = -1;
+		this.logMode = -1; 
 
 		this.rf = new RF(null, null);
 		this.sender = new Sender(this);
 		this.receiver = new Receiver(this);
+        this.seqNums = new SequenceTable();
 
 		new Thread(this.sender).start();
 		new Thread(this.receiver).start();
@@ -47,7 +47,7 @@ public class LinkLayer implements Dot11Interface {
 
 	/**
 	 * Print a message if the current log mode and the given
-	 * mask have any common bit set. 
+	 * mask have any common bit set.
 	 * 
 	 * @param msg
 	 * @param mask
@@ -69,17 +69,14 @@ public class LinkLayer implements Dot11Interface {
 		if (bytesToSend != len) {
 			this.log("Cannot send all " + len + " bytes of data. Sending first " + bytesToSend + " bytes.", ERROR);
 		}
+		// make packet
+		short seqNum = this.seqNums.currentSeqNum(dest);
+		Packet pkt = new Packet(Packet.DATA, seqNum, dest, this.macAddr, data, bytesToSend);
 
-		Packet pkt = new Packet(Packet.DATA, 0, dest, this.macAddr, data, bytesToSend); //TODO seq #
-		this.log("Enqueueing packet: " + pkt.toString(), DEBUG);
+		this.log("Enqueueing packet: " + pkt, DEBUG);
 		boolean success = this.sender.enqueue(pkt);
 
-		if (!success) {
-			this.log("Failed to enqueue outgoing data packet.", ERROR);
-			return -1;
-		} else {
-			return bytesToSend;
-		}
+		return success ? bytesToSend : 0;
 	}
 
 	@Override
@@ -88,7 +85,7 @@ public class LinkLayer implements Dot11Interface {
 	 * the Transmission object. See docs for full description.
 	 */
 	public int recv(Transmission t) {
-		Packet pkt = this.receiver.next();
+		Packet pkt = this.receiver.nextPacket();
 		byte[] data = pkt.extractData();
 		t.setBuf(data);
 		t.setDestAddr(pkt.getDest());
@@ -101,7 +98,7 @@ public class LinkLayer implements Dot11Interface {
 	 * Returns a current status code. See docs for full description.
 	 */
 	public int status() {
-		out.println("LinkLayer: Faking a status() return value of 0"); //TODO
+		out.println("LinkLayer: Faking a status() return value of 0"); // TODO
 		return 0;
 	}
 
@@ -122,7 +119,8 @@ public class LinkLayer implements Dot11Interface {
 			}
 
 			case 1: {
-				this.logMode = val | ERROR; //err messages are always logged
+				this.logMode = val | ERROR; // err messages are always logged
+				this.log("Setting debug state to "+this.logMode, ERROR);
 			}
 
 			// TODO other commands
@@ -131,5 +129,29 @@ public class LinkLayer implements Dot11Interface {
 				break;
 		}
 		return 0;
+	}
+
+	private long time() {
+		return this.rf.clock(); // TODO clock synchronization
+	}
+
+	public long nextBlockTime(){
+		long curTime = this.time();
+		long blockTime = curTime % BLOCK_DURATION;
+		if (blockTime == 0){
+			return curTime;
+		} else {
+			return curTime + BLOCK_DURATION - blockTime;
+		}
+	}
+
+	public void waitUntil(long targetTime) throws InterruptedException {
+		long sleepTime = 10;
+		// sleep wait
+		while (targetTime - this.time() > sleepTime) {
+			Thread.sleep(sleepTime);
+		}
+		// busy wait
+		while (this.time() < targetTime);
 	}
 }
