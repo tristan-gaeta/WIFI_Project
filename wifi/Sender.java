@@ -44,7 +44,7 @@ public class Sender implements Runnable {
     @Override
     public void run() {
         transition: while (!Thread.interrupted()) {
-            // transition has occured
+            // transition has occurred
             this.ll.log("Entered state: " + this.state, LinkLayer.STATE);
             try {
                 switch (this.state) {
@@ -158,7 +158,6 @@ public class Sender implements Runnable {
                 } else {
                     this.acknowledged = true;
                     this.notify();
-                    this.ll.seqNums.increment(src);
                     this.ll.log("Acknowledged", LinkLayer.DEBUG);
                 }
             } else {

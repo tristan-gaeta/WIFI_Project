@@ -1,6 +1,8 @@
 package wifi;
 
 import java.io.PrintWriter;
+import java.util.HashMap;
+
 import rf.RF;
 
 /**
@@ -18,11 +20,11 @@ public class LinkLayer implements Dot11Interface {
 	public final RF rf;
 	private final PrintWriter out;
 	public final short macAddr;
-    public final SequenceTable seqNums;
+	public final HashMap<Short, Short> seqNums;
 	public final Sender sender;
 	public final Receiver receiver;
 
-	private int logMode;
+	private int debugLevel;
 
 	/**
 	 * Constructor takes a MAC address and the PrintWriter to which our output will
@@ -34,12 +36,12 @@ public class LinkLayer implements Dot11Interface {
 	public LinkLayer(short ourMAC, PrintWriter output) {
 		this.macAddr = ourMAC;
 		this.out = output;
-		this.logMode = -1; 
+		this.debugLevel = ERROR;
 
 		this.rf = new RF(null, null);
 		this.sender = new Sender(this);
 		this.receiver = new Receiver(this);
-        this.seqNums = new SequenceTable();
+		this.seqNums = new HashMap<>();
 
 		new Thread(this.sender).start();
 		new Thread(this.receiver).start();
@@ -53,7 +55,7 @@ public class LinkLayer implements Dot11Interface {
 	 * @param mask
 	 */
 	public void log(String msg, int mask) {
-		if ((this.logMode & mask) != 0) {
+		if ((this.debugLevel & mask) != 0) {
 			this.out.println(msg);
 		}
 	}
@@ -69,8 +71,12 @@ public class LinkLayer implements Dot11Interface {
 		if (bytesToSend != len) {
 			this.log("Cannot send all " + len + " bytes of data. Sending first " + bytesToSend + " bytes.", ERROR);
 		}
+		// get sequence number
+		this.seqNums.putIfAbsent(dest, (short) 0);
+		short seqNum = this.seqNums.get(dest);
+		this.seqNums.put(dest, (short) ((seqNum + 1) & 0xFFF));
+
 		// make packet
-		short seqNum = this.seqNums.currentSeqNum(dest);
 		Packet pkt = new Packet(Packet.DATA, seqNum, dest, this.macAddr, data, bytesToSend);
 
 		this.log("Enqueueing packet: " + pkt, DEBUG);
@@ -113,32 +119,32 @@ public class LinkLayer implements Dot11Interface {
 				summary += "Command 0: print summary\n";
 				summary += "Command 1: set debug level\n";
 				summary += "\tinput is a bitmask where bits 0-3 are for debug, errors, and state respectively.\n";
-				summary += "\tCurrent Value: " + this.logMode;
+				summary += "\tCurrent Value: " + this.debugLevel;
 				this.out.println(summary);
-				break;
+				return 0;
 			}
 
 			case 1: {
-				this.logMode = val | ERROR; // err messages are always logged
-				this.log("Setting debug state to "+this.logMode, ERROR);
+				this.debugLevel = val | ERROR; // err messages are always logged
+				this.log("Setting debug state to " + this.debugLevel, ERROR);
+				return 0;
 			}
 
 			// TODO other commands
 
 			default:
-				break;
+				return 0;
 		}
-		return 0;
 	}
 
 	private long time() {
 		return this.rf.clock(); // TODO clock synchronization
 	}
 
-	public long nextBlockTime(){
+	public long nextBlockTime() {
 		long curTime = this.time();
 		long blockTime = curTime % BLOCK_DURATION;
-		if (blockTime == 0){
+		if (blockTime == 0) {
 			return curTime;
 		} else {
 			return curTime + BLOCK_DURATION - blockTime;
@@ -152,6 +158,7 @@ public class LinkLayer implements Dot11Interface {
 			Thread.sleep(sleepTime);
 		}
 		// busy wait
-		while (this.time() < targetTime);
+		while (this.time() < targetTime)
+			;
 	}
 }

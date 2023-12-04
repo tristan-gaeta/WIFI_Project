@@ -1,17 +1,18 @@
 package wifi;
 
+import java.util.HashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class Receiver implements Runnable {
     private final LinkLayer ll;
     private final BlockingQueue<Packet> queue;
-    private final SequenceTable seqNums;
+    private final HashMap<Short, Short> seqNums;
 
     public Receiver(LinkLayer ll) {
         this.ll = ll;
         this.queue = new LinkedBlockingQueue<>(4);
-        this.seqNums = new SequenceTable();
+        this.seqNums = new HashMap<>();
     }
 
     public Packet nextPacket() {
@@ -53,20 +54,21 @@ public class Receiver implements Runnable {
                             }
 
                             // queue data
-                            short expected = this.seqNums.currentSeqNum(sourceAddr);
+                            this.seqNums.putIfAbsent(sourceAddr, (short) 0);
+                            short expected = this.seqNums.get(sourceAddr);
 
-                            if (seqNum >= this.seqNums.currentSeqNum(sourceAddr)) {
+                            if (seqNum >= expected) {
                                 if (seqNum > expected) {
                                     this.ll.log("MAC " + sourceAddr + " used a larger sequence number than expected",  LinkLayer.ERROR);
                                 }
                                 if (this.queue.remainingCapacity() > 0){
                                     this.queue.offer(pkt);
-                                    this.seqNums.increment(sourceAddr);
                                 } else {
                                     this.ll.log("Dropping incoming packet because queue is full", LinkLayer.ERROR);
                                 }
+                                this.seqNums.put(sourceAddr, (short) ((seqNum + 1) & 0xFFF));
                             } else {
-                                this.ll.log("Not queueing incoming data with wrong sequence number",  LinkLayer.DEBUG);
+                                this.ll.log("Dropping incoming data with wrong sequence number",  LinkLayer.DEBUG);
                             }
                         } 
                         break;
