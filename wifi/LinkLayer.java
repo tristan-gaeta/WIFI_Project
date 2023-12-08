@@ -1,29 +1,32 @@
 package wifi;
 
 import java.io.PrintWriter;
-import java.util.HashMap;
 
 import rf.RF;
 
 /**
- * Use this layer as a starting point for your project code. See
- * {@link Dot11Interface} for more
- * details on these routines.
+ * 
+ * See {@link Dot11Interface} for more details on these routines.
  * 
  * @author Tristan Gaeta
+ * @version 10/23
  */
 public class LinkLayer implements Dot11Interface {
-	/** Bitmask for output log mode */
-	public static final int DEBUG = 1, STATE = 2, ERROR = 4;
-	private static final int BLOCK_DURATION = 50;
+	/** Bitmask for output log mode. */
+	public static final int DEBUG = 1, STATE = 2, ERROR = 4, TIMING = 8;
+
+	/** timing is aligned by {@value #BOUNDARY_SIZE}ms boundaries. */
+	public static final int BOUNDARY_SIZE = 50;
 
 	public final RF rf;
-	private final PrintWriter out;
 	public final short macAddr;
-	public final HashMap<Short, Short> seqNums;
 	public final Sender sender;
 	public final Receiver receiver;
 
+	public volatile long beaconFrequency = 12_000;
+
+	private final PrintWriter out;
+	private int offset;
 	private int debugLevel;
 
 	/**
@@ -41,7 +44,6 @@ public class LinkLayer implements Dot11Interface {
 		this.rf = new RF(null, null);
 		this.sender = new Sender(this);
 		this.receiver = new Receiver(this);
-		this.seqNums = new HashMap<>();
 
 		new Thread(this.sender).start();
 		new Thread(this.receiver).start();
@@ -66,23 +68,20 @@ public class LinkLayer implements Dot11Interface {
 	 * of bytes to send. See docs for full description.
 	 */
 	public int send(short dest, byte[] data, int len) {
-		int bytesToSend = Math.min(Math.min(data.length, len), Packet.MAX_DATA_SIZE);
+		// cannot send data under these conditions
+		if (len < 0 || data == null || dest == this.macAddr) {
+			return -1;
+		}
 
+		// limit size of the packet's data portion
+		int bytesToSend = Math.min(Math.min(data.length, len), Packet.MAX_DATA_SIZE);
 		if (bytesToSend != len) {
 			this.log("Cannot send all " + len + " bytes of data. Sending first " + bytesToSend + " bytes.", ERROR);
 		}
-		// get sequence number
-		this.seqNums.putIfAbsent(dest, (short) 0);
-		short seqNum = this.seqNums.get(dest);
-		this.seqNums.put(dest, (short) ((seqNum + 1) & 0xFFF));
 
-		// make packet
-		Packet pkt = new Packet(Packet.DATA, seqNum, dest, this.macAddr, data, bytesToSend);
+		boolean success = this.sender.enqueue(dest, data, bytesToSend);
 
-		this.log("Enqueueing packet: " + pkt, DEBUG);
-		boolean success = this.sender.enqueue(pkt);
-
-		return success ? bytesToSend : 0;
+		return success ? bytesToSend : -1;
 	}
 
 	@Override
@@ -92,11 +91,16 @@ public class LinkLayer implements Dot11Interface {
 	 */
 	public int recv(Transmission t) {
 		Packet pkt = this.receiver.nextPacket();
-		byte[] data = pkt.extractData();
-		t.setBuf(data);
-		t.setDestAddr(pkt.getDest());
-		t.setSourceAddr(pkt.getSource());
-		return data.length;
+
+		if (pkt == null) {
+			return 0;
+		} else {
+			byte[] data = pkt.extractData();
+			t.setBuf(data);
+			t.setDestAddr(pkt.getDest());
+			t.setSourceAddr(pkt.getSource());
+			return data.length;
+		}
 	}
 
 	@Override
@@ -137,28 +141,33 @@ public class LinkLayer implements Dot11Interface {
 		}
 	}
 
-	private long time() {
-		return this.rf.clock(); // TODO clock synchronization
+	public long time() {
+		return this.rf.clock() + this.offset;
 	}
 
-	public long nextBlockTime() {
-		long curTime = this.time();
-		long blockTime = curTime % BLOCK_DURATION;
+	public long nextBoundary(){
+		return this.nearestBoundaryTo(this.time());
+	}
+
+	public long nearestBoundaryTo(long time) {
+		long blockTime = time % BOUNDARY_SIZE;
 		if (blockTime == 0) {
-			return curTime;
+			return time;
 		} else {
-			return curTime + BLOCK_DURATION - blockTime;
+			return time + BOUNDARY_SIZE - blockTime;
 		}
 	}
 
 	public void waitUntil(long targetTime) throws InterruptedException {
-		long sleepTime = 10;
+		long busyWaitTime = 2; // ms
 		// sleep wait
-		while (targetTime - this.time() > sleepTime) {
-			Thread.sleep(sleepTime);
+		try {
+			Thread.sleep(targetTime - this.time() - busyWaitTime);
+		} catch (IllegalArgumentException e) {
 		}
 		// busy wait
-		while (this.time() < targetTime)
-			;
+		while (this.time() < targetTime) {
+			Thread.onSpinWait();
+		}
 	}
 }

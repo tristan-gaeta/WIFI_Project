@@ -3,15 +3,17 @@ package wifi;
 import java.util.HashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import rf.RF;
 
 public class Receiver implements Runnable {
+    public static final int BUFFER_CAPACITY = 4;
+
     private final LinkLayer ll;
     private final BlockingQueue<Packet> queue;
     private final HashMap<Short, Short> seqNums;
-
     public Receiver(LinkLayer ll) {
         this.ll = ll;
-        this.queue = new LinkedBlockingQueue<>(4);
+        this.queue = new LinkedBlockingQueue<>(BUFFER_CAPACITY);
         this.seqNums = new HashMap<>();
     }
 
@@ -28,7 +30,7 @@ public class Receiver implements Runnable {
     public void run() {
         while (!Thread.interrupted()) {
             byte[] data = this.ll.rf.receive(); // block until data arrives
-            long txEndTime = this.ll.nextBlockTime(); // record time transmission ends
+            long txEndTime = this.ll.nextBoundary(); // record time transmission ends
             Packet pkt = new Packet(data);
 
             // Perform checksum
@@ -43,15 +45,7 @@ public class Receiver implements Runnable {
                             short sourceAddr = pkt.getSource();
                             short seqNum = pkt.getSeqNum();
 
-                            // send ACK
-                            Packet ack = new Packet(Packet.ACK, seqNum, sourceAddr, this.ll.macAddr);
-                            this.ll.log("Sending ACK: " + ack, LinkLayer.DEBUG);
-                            try {
-                                this.ll.waitUntil(txEndTime + this.ll.rf.aSIFSTime);
-                                this.ll.rf.transmit(ack.asBytes());
-                            } catch (InterruptedException e) {
-                                this.ll.log("Receiver interrupted while waiting SIFS", LinkLayer.ERROR);
-                            }
+                            this.sendAck(pkt, txEndTime);
 
                             // queue data
                             this.seqNums.putIfAbsent(sourceAddr, (short) 0);
@@ -59,18 +53,16 @@ public class Receiver implements Runnable {
 
                             if (seqNum >= expected) {
                                 if (seqNum > expected) {
-                                    this.ll.log("MAC " + sourceAddr + " used a larger sequence number than expected",  LinkLayer.ERROR);
+                                    this.ll.log("MAC " + sourceAddr + " used a larger sequence number than expected", LinkLayer.DEBUG);
                                 }
-                                if (this.queue.remainingCapacity() > 0){
-                                    this.queue.offer(pkt);
-                                } else {
+                                if (!this.queue.offer(pkt)) {
                                     this.ll.log("Dropping incoming packet because queue is full", LinkLayer.ERROR);
                                 }
                                 this.seqNums.put(sourceAddr, (short) ((seqNum + 1) & 0xFFF));
                             } else {
-                                this.ll.log("Dropping incoming data with wrong sequence number",  LinkLayer.DEBUG);
+                                this.ll.log("Dropping incoming data with wrong sequence number", LinkLayer.DEBUG);
                             }
-                        } 
+                        }
                         break;
                     }
 
@@ -84,13 +76,26 @@ public class Receiver implements Runnable {
                     // TODO other cases
 
                     default: {
-                        this.ll.log("Incoming packet has invalid frame type", LinkLayer.ERROR);
+                        this.ll.log("Incoming packet has invalid frame type", LinkLayer.DEBUG);
                         break;
                     }
                 }
             } else {
-                this.ll.log("Incoming packet had invalid CRC.", LinkLayer.DEBUG);
+                this.ll.log("Incoming packet had invalid CRC", LinkLayer.DEBUG);
             }
+        }
+    }
+
+    private void sendAck(Packet pkt, long txEndTime) {
+        short sourceAddr = pkt.getSource();
+        short seqNum = pkt.getSeqNum();
+        // send ACK
+        Packet ack = new Packet(Packet.ACK, seqNum, sourceAddr, this.ll.macAddr, null, 0);
+        this.ll.log("Sending ACK: " + ack, LinkLayer.DEBUG);
+        try {
+            this.ll.waitUntil(txEndTime + RF.aSIFSTime);
+        } catch (InterruptedException e) {
+            this.ll.log("Receiver interrupted while waiting SIFS", LinkLayer.ERROR);
         }
     }
 }

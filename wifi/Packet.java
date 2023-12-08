@@ -2,26 +2,18 @@ package wifi;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.zip.CRC32;
 
 import rf.RF;
 
 public class Packet {
-    public static final int DATA = 0;
-    public static final int ACK = 1;
+    public static final int DATA = 0, ACK = 1, BEACON = 2;
 
     public static final int MIN_PACKET_SIZE = 10;
     public static final int MAX_DATA_SIZE = RF.aMPDUMaximumLength - MIN_PACKET_SIZE;
 
+    private final CRC32 checksum = new CRC32();
     private final ByteBuffer buf;
-
-    public Packet(int type, int seq, short dest, short source) {
-        short control = (short) (type << 13); // last 3 bits of type at head of short
-        control |= seq & 0xFFF; // last 12 bits of seq at tail
-
-        this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE);
-        this.buf.putShort(control).putShort(dest).putShort(source);
-        this.buf.putInt(this.checkSum());
-    }
 
     public Packet(int type, int seq, short dest, short source, byte[] data, int len) {
         short control = (short) (type << 13); // last 3 bits of type at head
@@ -29,12 +21,20 @@ public class Packet {
 
         this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE + len);
         this.buf.putShort(control).putShort(dest).putShort(source);
-        this.buf.put(data, 0, len);
+        if (data != null) {
+            this.buf.put(data, 0, len);
+        }
         this.buf.putInt(this.checkSum());
     }
 
     public Packet(byte[] array) {
         this.buf = ByteBuffer.wrap(array);
+    }
+
+    public Packet(short source, long time) {
+        short control = (short) (BEACON << 13);
+        this.buf = ByteBuffer.allocate(MIN_PACKET_SIZE + 8);
+        this.buf.putShort(control).putShort((short) -1).putShort(source).putLong(time).putInt(this.checkSum());
     }
 
     public byte[] asBytes() {
@@ -70,7 +70,9 @@ public class Packet {
     }
 
     public int checkSum() {
-        return -1; // TODO
+        this.checksum.reset();
+        this.checksum.update(this.buf.array(), 0, this.size() - 4);
+        return (int) this.checksum.getValue();
     }
 
     public int getCrc() {
