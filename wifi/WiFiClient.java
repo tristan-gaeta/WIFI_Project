@@ -206,14 +206,15 @@ public class WiFiClient implements ActionListener, Runnable
 									"Set Address",
 									JOptionPane.QUESTION_MESSAGE);  
 					if (inputString != null) {
-						Scanner s = new Scanner(inputString);
-						if (s.hasNextShort()) {
-							sendAddrs[i] = s.nextShort();
-							this.addText("Mapping button to MAC address "+sendAddrs[i]+"\n");
-							sendButtons[i].setText("MAC "+sendAddrs[i]);
-						}
-						else {
-							this.addText("That wasn't a valid address.\n");
+						try(Scanner s = new Scanner(inputString)){
+							if (s.hasNextShort()) {
+								sendAddrs[i] = s.nextShort();
+								this.addText("Mapping button to MAC address "+sendAddrs[i]+"\n");
+								sendButtons[i].setText("MAC "+sendAddrs[i]);
+							}
+							else {
+								this.addText("That wasn't a valid address.\n");
+							}
 						}
 					}
 				}
@@ -243,17 +244,18 @@ public class WiFiClient implements ActionListener, Runnable
 							"Enter Command",
 							JOptionPane.QUESTION_MESSAGE);  
 			if (inputString != null) {
-				Scanner s = new Scanner(inputString);
-				int value = 0;
-				if (s.hasNextInt()) {
-					int command = s.nextInt();
-					if (s.hasNextInt())
-						value = s.nextInt();
-					int result = theLinkLayer.sendCommand(command, value);
-					this.addText("Command to 802.11~ layer ("+command+", "+value+") returned "+result+"\n");
-				}
-				else {
-					this.addText("Not a valid command.");
+				try(Scanner s = new Scanner(inputString)){
+					int value = 0;
+					if (s.hasNextInt()) {
+						int command = s.nextInt();
+						if (s.hasNextInt())
+							value = s.nextInt();
+						int result = theLinkLayer.sendCommand(command, value);
+						this.addText("Command to 802.11~ layer ("+command+", "+value+") returned "+result+"\n");
+					}
+					else {
+						this.addText("Not a valid command.");
+					}
 				}
 			}
 		}
@@ -393,8 +395,10 @@ public class WiFiClient implements ActionListener, Runnable
 		// Take MAC on command-line if it's available, or create a random MAC
 
 		if (args.length > 0) {
-			mac = (new Scanner(args[0]).nextShort());
-			System.out.println("Using MAC address of "+mac+" as requested.");
+			try(Scanner s = new Scanner(args[0])){
+				mac = s.nextShort();
+				System.out.println("Using MAC address of "+mac+" as requested.");
+			}
 		}
 		else {
 			mac = (short)(rand.nextInt(100)+701);

@@ -5,9 +5,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 
-import wifi.Dot11Interface;
-import wifi.GUIClientInterface;
-
 /**
  * This class acts as a thin layer between the GUI client code and the Java-based
  * 802.11~ layer.  (There's a similar layer that mediates between the Java GUI code
