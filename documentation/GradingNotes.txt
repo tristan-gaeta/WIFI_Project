@@ -1,0 +1,85 @@
+
+802.11 Grading		98/100 --> 95/100 late
+--------------
+
+Code Style          10/10      
+    Is it OO?
+    Is it well organized & commented?  
+    Broken into classes appropriately?  
+    Does it make use of CONSTANTS from RF layer?
+    (This category includes quality of OUTPUT as well)
+    
+    
+Method Completion   20/20
+    5 points each for send, recv, status, and command.
+    Requires that any supporting code be complete as well.
+    
+    
+Interface Fidelity  14/15
+    Do routines take and return expected values?
+    Are queue limits respected?
+    Are required command settings supported?
+        (Fixed slot selection, debug output, beacon interval?)
+    
+    
+Packet Mechanics    10/10
+    Are outgoing packets correctly constructed?
+    Are incoming packets unpacked correctly?
+    Are they too long or too short?
+    Are limits on payload size implemented correctly?
+    
+    
+Time Management     20/20
+    Does the implementation round to 50ms slots?
+    Is there a local clock?
+    Are BEACONS sent?  Is the time constant appropriate?
+    Are BEACONS received properly?
+    Are BEACONS sent even if data's queued?
+    Does the implementation WAIT properly?  (No busy waiting)
+    
+    
+CSMA/CA Details     24/25
+    Wait DIFS on idle channel before sending?
+    Wait SIFS before sending an ACK?
+    Wait DIFS + SLOTs if channel was busy?
+    Pause countdown if interrupted?
+    Are retransmissions ACKed?  Delivered?
+    Sequence numbers handled properly?
+        Maintain counter for each destination?
+        Separate counter for bcast?
+        Accept incoming even if gaps?
+    Is the retransmission bit set appropriately?
+    
+    
+Notes:
+-----
+
+Nice job! Your implementation passed the vast majority of my tests without any
+odd behavior. All of the basic packet construction/deconstruction was solid,
+sending and receiving worked whether to the broadcast address or a specific MAC,
+queue limits were properly respected on incoming data (though not outgoing), and
+all of the beacon-related stuff looked good (you sent them when you should, even
+if data was pending, the time constant looked good, and you interpreted incoming
+beacons properly).
+
+When I tested the CSMA/CA stuff, based purely on timing observations, your
+window size didn't look like it adjusted properly. It was something like 4
+slots, then 17, 23, 37, and 44. I turned on your debugging output to see if it
+shed any light on how large *you* thought the windows were, but those results
+were a little odd too. If I counted how many times you printed "AWAITING_SLOT",
+it still wasn't 3, 7, 15, 31, 31, though it was closer than the timings would
+indicate.
+
+To check your slot-waiting behavior I cycled between busy and idle while you
+were trying to count down from what should have been a window size of 3. I made
+the channel busy again after DIFS + 1.2 slots, which should give you enough time
+to count a slot before it gets busy again each time, but you took longer than
+expected. It seemed like you were counting a slot on every *other* idle
+interval, though if your window sizes were too large that might have explained
+it as well. On a subsequent test, when I had your window maxed out and used
+DIFS+2.5 slot intervals, you counted just about as expected.
+
+Your code was really tidy -- especially the implementation of the state diagram.
+It was one of the best I saw.
+
+I rounded down on the late penalty. Happy holiday-of-your-choice.

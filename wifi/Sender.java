@@ -1,7 +1,6 @@
 package wifi;
 
 import java.util.HashMap;
-import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -24,9 +23,8 @@ public class Sender implements Runnable {
 
     /** The link layer running this thread */
     private final LinkLayer ll;
-    /* The queue of data packets we have to send */
+    /** The queue of data packets we have to send */
     private final BlockingQueue<Packet> queue;
-    private final Random rand; // ued for random wait time
     private final HashMap<Short, Short> seqNums;
 
     private State state;
@@ -36,14 +34,16 @@ public class Sender implements Runnable {
     private int slotWaitCount;
     private boolean cautious;
     private boolean acknowledged;
-    
+
+    // timing
+    private long beaconTimer;
+    private long ackTimer;
+
     private long prevBeaconTime;
-    private long beaconFrequency;
 
     public Sender(LinkLayer ll) {
         this.ll = ll;
         this.queue = new LinkedBlockingQueue<>(BUFFER_CAPACITY);
-        this.rand = new Random();
         this.seqNums = new HashMap<>();
         this.state = State.AWAITING_DATA;
         this.collisionWindow = RF.aCWmin;
@@ -51,24 +51,20 @@ public class Sender implements Runnable {
 
     @Override
     public void run() {
-        transition: while (!Thread.interrupted()) {
+        while (!Thread.interrupted()) {
             // transition has occurred
             this.ll.log("Entered state: " + this.state, LinkLayer.STATE);
             try {
-                switch (this.state) {
+                stateSwitch: switch (this.state) {
                     case AWAITING_DATA: {
-                        // block until we need to do stuff
-                        this.curPkt = this.queue.poll(beaconFrequency, TimeUnit.MILLISECONDS);
-                        long curTime = this.ll.time();
-                        if (curTime - this.prevBeaconTime >= this.beaconFrequency){
-                            this.curPkt = new Packet(this.ll.macAddr, curTime);
-                            this.prevBeaconTime = curTime;
-                        } 
+                        // get next packet to send (data or beacon)
+                        this.awaitData();
 
+                        /* transition */
                         if (this.ll.rf.inUse()) { // medium busy
                             // transition to idle wait
                             this.cautious = true;
-                            this.slotWaitCount = this.rand.nextInt(this.collisionWindow);
+                            this.slotWaitCount = this.pickSlotWait();
                             this.state = State.AWAITING_IDLE;
                         } else { // medium idle
                             // transition to Slot wait
@@ -77,60 +73,77 @@ public class Sender implements Runnable {
                             this.slotWaitCount = 0;
                             this.state = State.AWAITING_SLOT;
                         }
-                        continue transition;
+                        break stateSwitch;
                     }
                     case AWAITING_ACK: {
-                        boolean acknowledged;
-                        synchronized (this) {
-                            this.wait(50 * DIFS); // TODO how long is timeout? had to be bigger than difs
-                            acknowledged = this.acknowledged;
-                            this.acknowledged = false;
-                        }
-                        if (acknowledged || this.retries == RF.dot11RetryLimit) {
+                        this.awaitAck();
+
+                        /* transition */
+                        if (this.acknowledged || this.retries == RF.dot11RetryLimit) {
                             if (this.retries == RF.dot11RetryLimit) {
                                 this.ll.log("Dropping packet after max retries: " + this.curPkt, LinkLayer.ERROR);
+                                this.ll.status = LinkLayer.TX_FAILED;
+                            } else {
+                                this.ll.status = LinkLayer.TX_DELIVERED;
                             }
                             // transition to data wait
                             this.collisionWindow = RF.aCWmin;
                             this.retries = 0;
                             this.state = State.AWAITING_DATA;
-                        } else {
+                        } else { // Timeout occurred
+                            this.ll.status = LinkLayer.TX_FAILED;
                             // transition to idle wait
                             if (this.retries++ == 0) {
                                 this.curPkt.flagAsResend();
                             }
                             this.collisionWindow = Math.min(2 * this.collisionWindow, RF.aCWmax); // backoff
-                            this.slotWaitCount = this.rand.nextInt(this.collisionWindow);
+                            this.ll.log("Increased collision window to: "+this.collisionWindow, LinkLayer.DEBUG);
+                            this.slotWaitCount = this.pickSlotWait();
                             this.state = State.AWAITING_IDLE;
                         }
-                        continue transition;
+                        break stateSwitch;
                     }
                     case AWAITING_IDLE: {
                         while (this.ll.rf.inUse()) {
-                            Thread.onSpinWait(); 
+                            Thread.sleep(LinkLayer.BOUNDARY_SIZE);
                         }
                         // aligned boundary wait
                         this.ll.waitUntil(this.ll.nextBoundary() + DIFS);
                         this.state = State.AWAITING_SLOT;
-                        continue transition;
+                        break stateSwitch;
                     }
                     case AWAITING_SLOT: {
+                        /* transition */
                         if (this.ll.rf.inUse()) {
                             if (!this.cautious) {
                                 this.cautious = true;
-                                this.slotWaitCount = this.rand.nextInt(this.collisionWindow);
+                                this.slotWaitCount = this.pickSlotWait();
                             }
                             this.state = State.AWAITING_IDLE;
                         } else {
-                            if (this.slotWaitCount == 0) { // clear to send
-                                this.ll.log("Transmitting packet", LinkLayer.DEBUG);
+                            if (this.slotWaitCount == 0) {
+                                // clear to send
+                                this.ll.log("Transmitting packet: " + this.curPkt, LinkLayer.DEBUG);
                                 this.ll.rf.transmit(this.curPkt.asBytes());
-                                if (this.curPkt.getDest() == -1) { // don't expect ack on broadcast
+
+                                if (this.ll.timing) {
+                                    long curTime = System.currentTimeMillis();
+                                    this.ackTimer = curTime; // start ack timer
+                                    if (this.beaconTimer != -1) {
+                                        // time between when we noticed we need to send a beacon and the end of tx
+                                        this.ll.log("Beacon time: " + (curTime - this.beaconTimer), LinkLayer.TIMING);
+                                    }
+                                }
+
+                                /* transition */
+                                if (this.curPkt.getDest() == -1) {
+                                    // don't expect ack on broadcast
                                     this.state = State.AWAITING_DATA;
                                 } else {
                                     this.state = State.AWAITING_ACK;
                                 }
                             } else {
+                                // perform 1 slot wait
                                 this.ll.waitUntil(this.ll.nextBoundary() + RF.aSlotTime);
                                 if (!this.ll.rf.inUse()) {
                                     this.slotWaitCount--;
@@ -138,7 +151,7 @@ public class Sender implements Runnable {
                             }
                         }
 
-                        continue transition;
+                        break stateSwitch;
                     }
                     default: {
                         this.ll.log("Entered an invalid state. Terminating sending thread.", LinkLayer.ERROR);
@@ -151,9 +164,72 @@ public class Sender implements Runnable {
         }
     }
 
+    /**
+     * Wait for the next data or beacon packet to send
+     */
+    public void awaitData() {
+        this.curPkt = null;
+        long timeToNextBeacon = this.ll.beaconFrequency - (this.ll.time() - this.prevBeaconTime);
 
+        // block for incoming data on the queue if we have time
+        if (timeToNextBeacon > 0) {
+            try {
+                this.curPkt = this.queue.poll(timeToNextBeacon, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                this.ll.log("Sender interrupted while blocking for incoming data.", LinkLayer.ERROR);
+            }
+        }
+        // record time if we're sending beacon
+        if (this.ll.timing) {
+            this.beaconTimer = (this.curPkt == null) ? System.currentTimeMillis() : -1;
+        }
+        if (this.curPkt == null) {
+            // time to send beacon
+            long localTime = this.ll.time();
+            this.prevBeaconTime = localTime;
+            this.curPkt = new Packet(this.ll.macAddr, localTime + LinkLayer.BEACON_DELIVERY_TIME);
+        }
+    }
 
+    /**
+     * Wait for a valid ack or timeout
+     * 
+     */
+    public void awaitAck() {
+        this.acknowledged = false;
+        try {
+            // receiving thread will wake us if ack arrives
+            synchronized (this) {
+                this.wait(LinkLayer.ACK_TIMEOUT);
+            }
+        } catch (InterruptedException e) {
+            this.ll.log("Sender interrupted while waiting for ack", LinkLayer.ERROR);
+        }
 
+        if (this.acknowledged && this.ll.timing) {
+            // Time between end of tx and sender wake
+            this.ll.log("Ack time: " + (System.currentTimeMillis() - this.ackTimer), LinkLayer.TIMING);
+        }
+    }
+
+    /**
+     * The number of slots to wait before sending determined from collision window.
+     * 
+     * @return slots
+     */
+    public int pickSlotWait() {
+        return this.ll.randomWait ? (int) (Math.random() * this.collisionWindow) : this.collisionWindow;
+    }
+
+    /**
+     * Create a packet and put it on the outgoing queue if there is room
+     * 
+     * 
+     * @param dest        MAC address
+     * @param data
+     * @param bytesToSend
+     * @return true if accepted else false
+     */
     public boolean enqueue(short dest, byte[] data, int bytesToSend) {
         // get sequence number
         this.seqNums.putIfAbsent(dest, (short) 0);
@@ -172,7 +248,10 @@ public class Sender implements Runnable {
     }
 
     /**
-     * Attempt to
+     * Alerts the sender thread that a valid ack arrived
+     * 
+     * @param seqNum ACK's sequence number
+     * @param src    MAC address of source
      */
     public void acknowledgePacket(int seqNum, short src) {
         if (this.state == State.AWAITING_ACK) {

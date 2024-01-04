@@ -94,6 +94,10 @@ public class Packet {
         this.buf.putInt(this.size() - 4, this.checkSum());
     }
 
+    public long getTime(){
+        return this.buf.getLong(6);
+    }
+
     public int size() {
         return this.buf.array().length;
     }
@@ -108,7 +112,9 @@ public class Packet {
             case ACK:
                 str += "ACK ";
                 break;
-            // TODO others
+            case BEACON:
+                str += "BEACON";
+                break;
             default:
                 return str + "INVALID]";
         }
@@ -117,7 +123,7 @@ public class Packet {
         int size = this.size();
         if (size > MIN_PACKET_SIZE) {
             str += " ";
-            for (int i = 6; i < this.size() - 4; i++) {
+            for (int i = 6; i < size - 4; i++) {
                 str += (char) this.buf.get(i);
             }
         }
