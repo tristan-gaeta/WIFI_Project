@@ -5,6 +5,10 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import rf.RF;
 
+/**
+ * This class implements methods for the receiving thread of the {@link LinkLayer}.
+ * @author Tristan Gaeta
+ */
 public class Receiver implements Runnable {
     public static final int BUFFER_CAPACITY = 4;
 
@@ -27,6 +31,11 @@ public class Receiver implements Runnable {
         }
     }
 
+    /**
+     * This method will run indefinitely. It will wait for data incoming data,
+     * queueing it to be passed to the layer above only if it has a valid 
+     * checksum and sequence number.
+     */
     @Override
     public void run() {
         long beaconUnpackTime;

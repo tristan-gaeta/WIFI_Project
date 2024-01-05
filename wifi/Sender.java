@@ -8,9 +8,14 @@ import java.util.concurrent.TimeUnit;
 import rf.RF;
 
 /**
- * Sending thread
+ * This class contains methods for the sending thread of the {@link LinkLayer}. 
+ * @author Tristan Gaeta
  */
 public class Sender implements Runnable {
+    /**
+     * This is used to keep track of the current state of execution in the 802.11~
+     * protocol. See the state diagram provided in the documentation directory.
+     */
     private enum State {
         AWAITING_DATA,
         AWAITING_IDLE,
@@ -18,15 +23,18 @@ public class Sender implements Runnable {
         AWAITING_ACK
     }
 
-    private static final int DIFS = RF.aSIFSTime + 2 * RF.aSlotTime;
+    // Final fields
     public static final int BUFFER_CAPACITY = 4;
 
+    /** Inter-frame space used for data transmissions */
+    private static final int DIFS = RF.aSIFSTime + 2 * RF.aSlotTime;
     /** The link layer running this thread */
     private final LinkLayer ll;
     /** The queue of data packets we have to send */
     private final BlockingQueue<Packet> queue;
     private final HashMap<Short, Short> seqNums;
 
+    // Instance variables
     private State state;
     private Packet curPkt;
     private int collisionWindow;
@@ -34,28 +42,34 @@ public class Sender implements Runnable {
     private int slotWaitCount;
     private boolean cautious;
     private boolean acknowledged;
+    private long prevBeaconTime;
 
     // timing
     private long beaconTimer;
     private long ackTimer;
 
-    private long prevBeaconTime;
-
     public Sender(LinkLayer ll) {
         this.ll = ll;
+        // we are using a linked blocking queue here because it uses 
+        // different locks for insertion and removal.
         this.queue = new LinkedBlockingQueue<>(BUFFER_CAPACITY);
         this.seqNums = new HashMap<>();
         this.state = State.AWAITING_DATA;
         this.collisionWindow = RF.aCWmin;
     }
 
+    /**
+     * This method will run indefinitely. It will wait for data to be enqueued (using the 
+     * {@code enqueue()} method) then follow the 802.11~ protocol to send the data over the
+     * RF layer of the parent {@link LinkLayer}.
+     */
     @Override
     public void run() {
         while (!Thread.interrupted()) {
             // transition has occurred
             this.ll.log("Entered state: " + this.state, LinkLayer.STATE);
             try {
-                stateSwitch: switch (this.state) {
+                switch (this.state) {
                     case AWAITING_DATA: {
                         // get next packet to send (data or beacon)
                         this.awaitData();
@@ -73,7 +87,7 @@ public class Sender implements Runnable {
                             this.slotWaitCount = 0;
                             this.state = State.AWAITING_SLOT;
                         }
-                        break stateSwitch;
+                        break;
                     }
                     case AWAITING_ACK: {
                         this.awaitAck();
@@ -97,11 +111,11 @@ public class Sender implements Runnable {
                                 this.curPkt.flagAsResend();
                             }
                             this.collisionWindow = Math.min(2 * this.collisionWindow, RF.aCWmax); // backoff
-                            this.ll.log("Increased collision window to: "+this.collisionWindow, LinkLayer.DEBUG);
+                            this.ll.log("Increased collision window to: " + this.collisionWindow, LinkLayer.DEBUG);
                             this.slotWaitCount = this.pickSlotWait();
                             this.state = State.AWAITING_IDLE;
                         }
-                        break stateSwitch;
+                        break;
                     }
                     case AWAITING_IDLE: {
                         while (this.ll.rf.inUse()) {
@@ -110,7 +124,7 @@ public class Sender implements Runnable {
                         // aligned boundary wait
                         this.ll.waitUntil(this.ll.nextBoundary() + DIFS);
                         this.state = State.AWAITING_SLOT;
-                        break stateSwitch;
+                        break;
                     }
                     case AWAITING_SLOT: {
                         /* transition */
@@ -150,8 +164,7 @@ public class Sender implements Runnable {
                                 }
                             }
                         }
-
-                        break stateSwitch;
+                        break;
                     }
                     default: {
                         this.ll.log("Entered an invalid state. Terminating sending thread.", LinkLayer.ERROR);
@@ -193,7 +206,6 @@ public class Sender implements Runnable {
 
     /**
      * Wait for a valid ack or timeout
-     * 
      */
     public void awaitAck() {
         this.acknowledged = false;
@@ -225,7 +237,7 @@ public class Sender implements Runnable {
      * Create a packet and put it on the outgoing queue if there is room
      * 
      * 
-     * @param dest        MAC address
+     * @param dest  MAC address
      * @param data
      * @param bytesToSend
      * @return true if accepted else false

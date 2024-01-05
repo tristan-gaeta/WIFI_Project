@@ -1,29 +1,27 @@
 package wifi;
 
 import java.io.PrintWriter;
-
 import rf.RF;
 
 /**
- * 
+ * This class provides an implementation of the 802.11~ protocol.
  * See {@link Dot11Interface} for more details on these routines.
  * 
  * @author Tristan Gaeta
- * @version 10/23
  */
 public class LinkLayer implements Dot11Interface {
-	/** Bitmask for output log mode. */
+	/** Bitmask for log output mode. */
 	public static final int ERROR = 1, STATE = 2, DEBUG = 4, TIMING = 8;
 
 	/**
 	 * Timing related constant.
 	 * <p>
-	 * (These values are from tests run on a
+	 * (These values were observed from tests run on a
 	 * MacBook Air 1.6 GHz Dual-Core Intel Core i5 processor.)
 	 */
 	public static final int ACK_TIMEOUT = 2000, BEACON_DELIVERY_TIME = 2330, BEACON_UNPACK_TIME = 1;
 
-	/** Status code for the {@link Dot11Interface} status */
+	/** Status code for the {@link Dot11Interface}. */
 	public static final int SUCCESS = 1,
 			UNSPECIFIED_ERROR = 2,
 			RF_INIT_FAILED = 3,
@@ -35,9 +33,10 @@ public class LinkLayer implements Dot11Interface {
 			ILLEGAL_ARGUMENT = 9,
 			INSUFFICIENT_BUFFER_SPACE = 10;
 
-	/** timing is aligned by {@value #BOUNDARY_SIZE}ms boundaries. */
+	/** timing is aligned by boundaries of this size. */
 	public static final int BOUNDARY_SIZE = 50;
 
+	// Final fields
 	public final RF rf;
 	public final short macAddr;
 	public final Sender sender;
@@ -45,13 +44,16 @@ public class LinkLayer implements Dot11Interface {
 
 	private final PrintWriter out;
 
+	// Instance variables
+	private int debugLevel;
+
+	// Volatile instance variables
 	public volatile int clock_offset = 10;
 	public volatile long beaconFrequency = 12_000;
 	public volatile boolean randomWait = true;
 	public volatile int status = 0;
 	public volatile boolean timing;
 
-	private int debugLevel;
 
 	/**
 	 * Constructor takes a MAC address and the PrintWriter to which our output will
@@ -78,9 +80,6 @@ public class LinkLayer implements Dot11Interface {
 	/**
 	 * Print a message if the current log mode and the given
 	 * mask have any common bit set.
-	 * 
-	 * @param msg
-	 * @param mask
 	 */
 	public void log(String msg, int mask) {
 		if ((this.debugLevel & mask) != 0) {
@@ -88,11 +87,11 @@ public class LinkLayer implements Dot11Interface {
 		}
 	}
 
-	@Override
 	/**
 	 * Send method takes a destination, a buffer (array) of data, and the number
 	 * of bytes to send. See docs for full description.
 	 */
+	@Override
 	public int send(short dest, byte[] data, int len) {
 		// cannot send data under these conditions
 		if (len < 0 || data == null || dest == this.macAddr) {
@@ -116,12 +115,13 @@ public class LinkLayer implements Dot11Interface {
 		}
 	}
 
-	@Override
 	/**
 	 * Recv method blocks until data arrives, then writes it an address info into
 	 * the Transmission object. See docs for full description.
 	 */
+	@Override
 	public int recv(Transmission t) {
+		// blocks until next valid data packet
 		Packet pkt = this.receiver.nextPacket();
 
 		if (pkt == null) {
@@ -137,10 +137,10 @@ public class LinkLayer implements Dot11Interface {
 		}
 	}
 
-	@Override
 	/**
 	 * Returns a current status code. See docs for full description.
 	 */
+	@Override
 	public int status() {
 		return this.status;
 	}
@@ -191,7 +191,7 @@ public class LinkLayer implements Dot11Interface {
 			}
 
 			default:
-				this.out.println("Unknown command: (" + cmd + ", " + val+")");
+				this.out.println("Unknown command: (" + cmd + ", " + val + ")");
 				this.out.println("Enter command (0, 0) for option summary.");
 				this.status = ILLEGAL_ARGUMENT;
 				return 0;
